@@ -161,8 +161,15 @@ async function parseMermaidClassDiagramOfficial(text: string, mermaidLib: any): 
             const parsedClasses = db.getClasses();
             const parsedRelations = db.getRelations();
 
+            let classesArray: [string, any][] = [];
+            if (parsedClasses instanceof Map) {
+                classesArray = Array.from(parsedClasses.entries());
+            } else if (parsedClasses && typeof parsedClasses === 'object') {
+                classesArray = Object.entries(parsedClasses);
+            }
+
             // 1. Elaborazione delle Classi e dei loro Membri (Proprietà, Metodi, Modificatori)
-            for (const [className, classData] of Object.entries<any>(parsedClasses)) {
+            for (const [className, classData] of classesArray) {
                 const entity = getEntity(className);
 
                 if (classData.annotations && classData.annotations.length > 0) {
@@ -174,19 +181,54 @@ async function parseMermaidClassDiagramOfficial(text: string, mermaidLib: any): 
 
                 const members = classData.members || [];
                 for (const memberObj of members) {
-                    const memberStr = typeof memberObj === 'string' ? memberObj : memberObj.id || memberObj.text || '';
+                    let memberStr = typeof memberObj === 'string' ? memberObj : memberObj.id || memberObj.text || '';
+                    
+                    // Ricostruzione corretta dai metadati AST per le proprietà
+                    if (typeof memberObj === 'object' && !Array.isArray(memberObj)) {
+                        let vis = memberObj.visibility || '';
+                        let type = memberObj.type ? memberObj.type + ' ' : '';
+                        let name = memberObj.name || memberObj.id || '';
+                        let classifier = memberObj.classifier || '';
+                        memberStr = `${vis}${type}${name}${classifier}`;
+                    }
                     if (memberStr) parseMember(memberStr, entity);
                 }
 
                 const methods = classData.methods || [];
                 for (const methodObj of methods) {
-                    const methodStr = typeof methodObj === 'string' ? methodObj : methodObj.id || methodObj.text || '';
+                    let methodStr = typeof methodObj === 'string' ? methodObj : methodObj.id || methodObj.text || '';
+                    
+                    // Ricostruzione corretta dai metadati AST per i metodi (forzando le parentesi)
+                    if (typeof methodObj === 'object' && !Array.isArray(methodObj)) {
+                        let vis = methodObj.visibility || '';
+                        let retType = methodObj.type || methodObj.returnType ? (methodObj.type || methodObj.returnType) + ' ' : '';
+                        let name = methodObj.name || methodObj.id || '';
+                        let params = methodObj.parameters !== undefined ? methodObj.parameters : '';
+                        let classifier = methodObj.classifier || '';
+                        
+                        if (name.includes('(')) {
+                            methodStr = `${vis}${retType}${name}${classifier}`;
+                        } else {
+                            methodStr = `${vis}${retType}${name}(${params})${classifier}`;
+                        }
+                    } else if (methodStr && !methodStr.includes('(')) {
+                        methodStr += '()'; // Se è una stringa grezza mancante, la forziamo a metodo
+                    }
                     if (methodStr) parseMember(methodStr, entity);
                 }
             }
 
+            let relationsArray: any[] = [];
+            if (Array.isArray(parsedRelations)) {
+                relationsArray = parsedRelations;
+            } else if (parsedRelations instanceof Map) {
+                relationsArray = Array.from(parsedRelations.values());
+            } else if (parsedRelations && typeof parsedRelations === 'object') {
+                relationsArray = Object.values(parsedRelations);
+            }
+
             // 2. Elaborazione delle Relazioni Avanzate UML
-            for (const rel of parsedRelations) {
+            for (const rel of relationsArray) {
                 const id1 = rel.id1?.trim();
                 const id2 = rel.id2?.trim();
                 if (!id1 || !id2) continue;
@@ -198,16 +240,16 @@ async function parseMermaidClassDiagramOfficial(text: string, mermaidLib: any): 
 
                 const isDotted = lineType === '1' || lineType === 'dotted' || lineType === 'dashed';
                 
-                // Ereditarietà (Extension)
+                // Mappatura codici ufficiale Mermaid UML:
+                // '1' = Estensione/Ereditarietà (<|--)
                 const isType1Ext = type1 === '1' || type1 === 'extension';
                 const isType2Ext = type2 === '1' || type2 === 'extension';
 
-                // Composizione (2), Aggregazione (3), Associazione (4)
-                // Questo ci permette di generare le proprietà di navigazione!
-                const isType1Comp = type1 === '2' || type1 === 'composition' || type1 === '3' || type1 === 'aggregation' || type1 === '4' || type1 === 'association';
-                const isType2Comp = type2 === '2' || type2 === 'composition' || type2 === '3' || type2 === 'aggregation' || type2 === '4' || type2 === 'association';
+                // '0' = Aggregazione (o--), '2' = Composizione (*--), '3' o '4' = Dipendenza/Associazione
+                const isType1Comp = type1 === '0' || type1 === 'aggregation' || type1 === '2' || type1 === 'composition' || type1 === '3' || type1 === 'dependency' || type1 === 'association' || type1 === '4';
+                const isType2Comp = type2 === '0' || type2 === 'aggregation' || type2 === '2' || type2 === 'composition' || type2 === '3' || type2 === 'dependency' || type2 === 'association' || type2 === '4';
 
-                // Ereditarietà
+                // Applica Ereditarietà
                 if (isType1Ext) {
                     if (isDotted) getEntity(id2).implements.push(id1);
                     else getEntity(id2).extends.push(id1);
@@ -219,14 +261,12 @@ async function parseMermaidClassDiagramOfficial(text: string, mermaidLib: any): 
 
                 // Generazione Automatica Proprietà per Composizione/Aggregazione/Associazione
                 if (isType1Comp) {
-                    // id1 contiene/possiede id2
                     const propName = id2;
                     if (!getEntity(id1).properties.some(p => p.name.toLowerCase() === propName.toLowerCase())) {
                         getEntity(id1).properties.push({ visibility: 'public', name: propName, type: id2, isStatic: false });
                     }
                 }
                 if (isType2Comp) {
-                    // id2 contiene/possiede id1
                     const propName = id1;
                     if (!getEntity(id2).properties.some(p => p.name.toLowerCase() === propName.toLowerCase())) {
                         getEntity(id2).properties.push({ visibility: 'public', name: propName, type: id1, isStatic: false });
@@ -258,7 +298,7 @@ function parseMember(memberStr: string, entity: Entity) {
         return;
     }
 
-    // Identifica membri statici ($) e li rimuove dalla stringa per il parsing
+    // Identifica membri statici ($)
     let isStatic = false;
     if (cleanStr.includes('$')) {
         isStatic = true;
