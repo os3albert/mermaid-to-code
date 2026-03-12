@@ -1,26 +1,390 @@
-// The module 'vscode' contains the VS Code extensibility API
-// Import the module and reference it with the alias vscode in your code below
 import * as vscode from 'vscode';
+import * as fs from 'fs';
+import * as path from 'path';
+import { JSDOM } from 'jsdom';
 
-// This method is called when your extension is activated
-// Your extension is activated the very first time the command is executed
-export function activate(context: vscode.ExtensionContext) {
+/**
+ * Estensione avanzata per generare codice C#
+ * a partire da diagrammi UML Mermaid (Class Diagram).
+ */
 
-	// Use the console to output diagnostic information (console.log) and errors (console.error)
-	// This line of code will only be executed once when your extension is activated
-	console.log('Congratulations, your extension "mermaid-to-code" is now active!');
-
-	// The command has been defined in the package.json file
-	// Now provide the implementation of the command with registerCommand
-	// The commandId parameter must match the command field in package.json
-	const disposable = vscode.commands.registerCommand('mermaid-to-code.helloWorld', () => {
-		// The code you place here will be executed every time your command is executed
-		// Display a message box to the user
-		vscode.window.showInformationMessage('Hello World from mermaid-to-code!');
-	});
-
-	context.subscriptions.push(disposable);
+enum EntityType {
+    Class,
+    Interface,
+    AbstractClass,
+    Enum
 }
 
-// This method is called when your extension is deactivated
+interface Property {
+    visibility: string;
+    name: string;
+    type: string;
+    isStatic: boolean;
+}
+
+interface Method {
+    visibility: string;
+    name: string;
+    returnType: string;
+    params: string;
+    isAbstract: boolean;
+    isStatic: boolean;
+}
+
+interface Entity {
+    name: string;
+    type: EntityType;
+    properties: Property[];
+    methods: Method[];
+    extends: string[];
+    implements: string[];
+    enumValues: string[];
+}
+
+// Riferimento globale per l'istanza di Mermaid caricata dinamicamente
+let mermaidInstance: any = null;
+
+export async function activate(context: vscode.ExtensionContext) {
+    
+    // 1. Configurazione JSDOM: Creiamo un finto browser PRIMA di caricare Mermaid
+    const dom = new JSDOM('<!DOCTYPE html><html><head></head><body></body></html>');
+    (global as any).window = dom.window;
+    (global as any).document = dom.window.document;
+    (global as any).DOMParser = dom.window.DOMParser;
+
+    // Fix per l'errore "Cannot set property navigator":
+    Object.defineProperty(global, 'navigator', {
+        value: dom.window.navigator,
+        configurable: true,
+        writable: true
+    });
+
+    // 2. Importiamo Mermaid in modo dinamico
+    try {
+        const mermaidModule = await import('mermaid');
+        mermaidInstance = mermaidModule.default || mermaidModule;
+        mermaidInstance.initialize({ startOnLoad: false });
+    } catch (err) {
+        console.error("Errore fatale durante il caricamento di Mermaid:", err);
+        vscode.window.showErrorMessage('Impossibile caricare il parser Mermaid. Assicurati che "mermaid" e "jsdom" siano installati.');
+        return;
+    }
+
+    let disposable = vscode.commands.registerCommand('mermaid-to-code.generate', async () => {
+        const editor = vscode.window.activeTextEditor;
+
+        if (!editor || editor.document.languageId !== 'markdown') {
+            vscode.window.showErrorMessage('Per favore, apri un file Markdown contenente un diagramma Mermaid.');
+            return;
+        }
+
+        const text = editor.document.getText();
+        
+        try {
+            const entitiesMap = await parseMermaidClassDiagramOfficial(text, mermaidInstance);
+
+            if (entitiesMap.size === 0) {
+                vscode.window.showWarningMessage('Nessun diagramma o classe Mermaid trovata nel file.');
+                return;
+            }
+
+            const folderPath = path.dirname(editor.document.uri.fsPath);
+            
+            entitiesMap.forEach((entity, name) => {
+                const content = generateCSharpCode(entity);
+                const filePath = path.join(folderPath, `${name}.cs`);
+                
+                fs.writeFileSync(filePath, content);
+            });
+            vscode.window.showInformationMessage(`Generati con successo ${entitiesMap.size} file C# in: ${folderPath}`);
+        } catch (error) {
+            vscode.window.showErrorMessage(`Errore durante il parsing di Mermaid o la generazione: ${error}`);
+        }
+    });
+
+    context.subscriptions.push(disposable);
+}
+
+function extractMermaidDiagrams(text: string): string[] {
+    const blocks: string[] = [];
+    const lines = text.split('\n');
+    let isInsideMermaid = false;
+    let currentBlock: string[] = [];
+
+    for (let i = 0; i < lines.length; i++) {
+        const line = lines[i].trim();
+        
+        if (line.startsWith('```mermaid')) {
+            isInsideMermaid = true;
+            currentBlock = [];
+        } else if (isInsideMermaid && line.startsWith('```')) {
+            isInsideMermaid = false;
+            const diagramText = currentBlock.join('\n');
+            if (diagramText.includes('classDiagram')) {
+                blocks.push(diagramText);
+            }
+        } else if (isInsideMermaid) {
+            currentBlock.push(lines[i]); 
+        }
+    }
+    
+    return blocks;
+}
+
+async function parseMermaidClassDiagramOfficial(text: string, mermaidLib: any): Promise<Map<string, Entity>> {
+    const entities = new Map<string, Entity>();
+
+    const getEntity = (name: string): Entity => {
+        if (!entities.has(name)) {
+            entities.set(name, { 
+                name, 
+                type: EntityType.Class, 
+                properties: [], 
+                methods: [], 
+                extends: [], 
+                implements: [], 
+                enumValues: [] 
+            });
+        }
+        return entities.get(name)!;
+    };
+
+    const diagrams = extractMermaidDiagrams(text);
+
+    for (const diagramContent of diagrams) {
+        try {
+            const diagram = await mermaidLib.mermaidAPI.getDiagramFromText(diagramContent);
+            const db = (diagram as any).db;
+            
+            if (!db || typeof db.getClasses !== 'function') continue;
+
+            const parsedClasses = db.getClasses();
+            const parsedRelations = db.getRelations();
+
+            // 1. Elaborazione delle Classi e dei loro Membri (Proprietà, Metodi, Modificatori)
+            for (const [className, classData] of Object.entries<any>(parsedClasses)) {
+                const entity = getEntity(className);
+
+                if (classData.annotations && classData.annotations.length > 0) {
+                    const ann = classData.annotations[0].toLowerCase();
+                    if (ann === 'interface') entity.type = EntityType.Interface;
+                    else if (ann === 'enumeration') entity.type = EntityType.Enum;
+                    else if (ann === 'abstract') entity.type = EntityType.AbstractClass;
+                }
+
+                const members = classData.members || [];
+                for (const memberObj of members) {
+                    const memberStr = typeof memberObj === 'string' ? memberObj : memberObj.id || memberObj.text || '';
+                    if (memberStr) parseMember(memberStr, entity);
+                }
+
+                const methods = classData.methods || [];
+                for (const methodObj of methods) {
+                    const methodStr = typeof methodObj === 'string' ? methodObj : methodObj.id || methodObj.text || '';
+                    if (methodStr) parseMember(methodStr, entity);
+                }
+            }
+
+            // 2. Elaborazione delle Relazioni Avanzate UML
+            for (const rel of parsedRelations) {
+                const id1 = rel.id1?.trim();
+                const id2 = rel.id2?.trim();
+                if (!id1 || !id2) continue;
+                
+                const r = rel.relation;
+                const lineType = String(r.lineType).toLowerCase();
+                const type1 = String(r.type1).toLowerCase();
+                const type2 = String(r.type2).toLowerCase();
+
+                const isDotted = lineType === '1' || lineType === 'dotted' || lineType === 'dashed';
+                
+                // Ereditarietà (Extension)
+                const isType1Ext = type1 === '1' || type1 === 'extension';
+                const isType2Ext = type2 === '1' || type2 === 'extension';
+
+                // Composizione (2), Aggregazione (3), Associazione (4)
+                // Questo ci permette di generare le proprietà di navigazione!
+                const isType1Comp = type1 === '2' || type1 === 'composition' || type1 === '3' || type1 === 'aggregation' || type1 === '4' || type1 === 'association';
+                const isType2Comp = type2 === '2' || type2 === 'composition' || type2 === '3' || type2 === 'aggregation' || type2 === '4' || type2 === 'association';
+
+                // Ereditarietà
+                if (isType1Ext) {
+                    if (isDotted) getEntity(id2).implements.push(id1);
+                    else getEntity(id2).extends.push(id1);
+                } 
+                if (isType2Ext) {
+                    if (isDotted) getEntity(id1).implements.push(id2);
+                    else getEntity(id1).extends.push(id2);
+                }
+
+                // Generazione Automatica Proprietà per Composizione/Aggregazione/Associazione
+                if (isType1Comp) {
+                    // id1 contiene/possiede id2
+                    const propName = id2;
+                    if (!getEntity(id1).properties.some(p => p.name.toLowerCase() === propName.toLowerCase())) {
+                        getEntity(id1).properties.push({ visibility: 'public', name: propName, type: id2, isStatic: false });
+                    }
+                }
+                if (isType2Comp) {
+                    // id2 contiene/possiede id1
+                    const propName = id1;
+                    if (!getEntity(id2).properties.some(p => p.name.toLowerCase() === propName.toLowerCase())) {
+                        getEntity(id2).properties.push({ visibility: 'public', name: propName, type: id1, isStatic: false });
+                    }
+                }
+            }
+
+        } catch (err) {
+            console.error("Errore nel parser di Mermaid: ", err);
+        }
+    }
+
+    return entities;
+}
+
+function parseMember(memberStr: string, entity: Entity) {
+    let cleanStr = memberStr.trim();
+
+    if (cleanStr.startsWith('<<') && cleanStr.endsWith('>>')) {
+        const annotation = cleanStr.substring(2, cleanStr.length - 2).toLowerCase();
+        if (annotation === 'interface') entity.type = EntityType.Interface;
+        else if (annotation === 'enumeration') entity.type = EntityType.Enum;
+        else if (annotation === 'abstract') entity.type = EntityType.AbstractClass;
+        return;
+    }
+
+    if (entity.type === EntityType.Enum) {
+        entity.enumValues.push(cleanStr);
+        return;
+    }
+
+    // Identifica membri statici ($) e li rimuove dalla stringa per il parsing
+    let isStatic = false;
+    if (cleanStr.includes('$')) {
+        isStatic = true;
+        cleanStr = cleanStr.replace('$', '').trim();
+    }
+
+    // Identifica membri astratti (*)
+    let isAbstract = false;
+    if (cleanStr.endsWith('*')) {
+        isAbstract = true;
+        cleanStr = cleanStr.substring(0, cleanStr.length - 1).trim();
+    }
+
+    // Visibilità (C# usa internal al posto di ~)
+    let visibility = 'public';
+    if (cleanStr.startsWith('-')) visibility = 'private';
+    else if (cleanStr.startsWith('#')) visibility = 'protected';
+    else if (cleanStr.startsWith('~')) visibility = 'internal';
+    else if (cleanStr.startsWith('+')) visibility = 'public';
+    
+    if ('-+#~'.includes(cleanStr.charAt(0))) {
+        cleanStr = cleanStr.substring(1).trim();
+    }
+
+    if (cleanStr.includes('(')) {
+        // Metodo
+        const parenStart = cleanStr.indexOf('(');
+        const parenEnd = cleanStr.lastIndexOf(')');
+        
+        const beforeParen = cleanStr.substring(0, parenStart).trim();
+        const params = cleanStr.substring(parenStart + 1, parenEnd).trim();
+        const afterParen = cleanStr.substring(parenEnd + 1).trim();
+
+        const beforeParts = beforeParen.split(' ').filter(p => p.length > 0);
+        const name = beforeParts.pop() || 'Method';
+        const returnType = beforeParts.join(' ') || afterParen || 'void';
+
+        entity.methods.push({ visibility, name, returnType, params, isAbstract, isStatic });
+    } else {
+        // Proprietà
+        if (cleanStr.includes(':')) {
+            const parts = cleanStr.split(':');
+            entity.properties.push({ visibility, name: parts[0].trim(), type: parts[1].trim(), isStatic });
+        } else {
+            const parts = cleanStr.split(' ').filter(p => p.length > 0);
+            const name = parts.pop() || 'Property';
+            const type = parts.join(' ') || 'object';
+            entity.properties.push({ visibility, name, type, isStatic });
+        }
+    }
+}
+
+function generateCSharpCode(entity: Entity): string {
+    let code = `/**\n * Auto-generato da diagramma UML Mermaid\n */\n`;
+    code += `using System;\nusing System.Collections.Generic;\n\n`;
+    code += `namespace MermaidGenerated\n{\n`;
+
+    const indent = '    '; 
+
+    if (entity.type === EntityType.Enum) {
+        code += `${indent}public enum ${entity.name}\n${indent}{\n`;
+        entity.enumValues.forEach(v => code += `${indent}    ${v},\n`);
+        code += `${indent}}\n}\n`;
+        return code;
+    }
+
+    let declaration = `${indent}public `;
+    if (entity.type === EntityType.Interface) declaration += `interface `;
+    else if (entity.type === EntityType.AbstractClass) declaration += `abstract class `;
+    else declaration += `class `;
+
+    declaration += entity.name;
+
+    const parents = [];
+    if (entity.extends.length > 0) parents.push(...entity.extends);
+    if (entity.implements.length > 0 && entity.type !== EntityType.Interface) parents.push(...entity.implements);
+    
+    const uniqueParents = Array.from(new Set(parents));
+
+    if (uniqueParents.length > 0) {
+        declaration += ` : ${uniqueParents.join(', ')}`;
+    }
+
+    code += `${declaration}\n${indent}{\n`;
+
+    // Generazione Proprietà
+    entity.properties.forEach(prop => {
+        const vis = entity.type === EntityType.Interface ? '' : `${prop.visibility} `;
+        const stat = prop.isStatic ? 'static ' : '';
+        code += `${indent}    ${vis}${stat}${mapType(prop.type)} ${prop.name} { get; set; }\n`;
+    });
+
+    if (entity.properties.length > 0 && entity.methods.length > 0) code += '\n';
+
+    // Generazione Metodi
+    entity.methods.forEach(method => {
+        const vis = entity.type === EntityType.Interface ? '' : `${method.visibility} `;
+        const stat = method.isStatic ? 'static ' : '';
+        const abs = (entity.type === EntityType.AbstractClass && method.isAbstract) ? 'abstract ' : '';
+        
+        const signature = `${vis}${stat}${abs}${mapType(method.returnType)} ${method.name}(${method.params})`;
+        
+        if (entity.type === EntityType.Interface || (entity.type === EntityType.AbstractClass && method.isAbstract)) {
+            code += `${indent}    ${signature};\n`; 
+        } else {
+            code += `${indent}    ${signature}\n${indent}    {\n${indent}        // TODO: Implementazione\n${indent}        throw new NotImplementedException();\n${indent}    }\n\n`; 
+        }
+    });
+
+    code += `${indent}}\n}\n`;
+    return code;
+}
+
+function mapType(type: string): string {
+    // Generici (List~int~ -> List<int>)
+    let normalizedType = type.replace(/~([^~]+)~/g, '<$1>');
+
+    const t = normalizedType.toLowerCase();
+    
+    if (t === 'string' || t === 'bool' || t === 'void' || t === 'int' || t === 'double' || t === 'float' || t === 'long' || t === 'decimal') return t;
+    if (t === 'boolean') return 'bool';
+    if (t === 'number') return 'double'; 
+    if (t === 'any') return 'object';
+    if (t === 'date' || t === 'datetime') return 'DateTime';
+
+    return normalizedType; 
+}
+
 export function deactivate() {}

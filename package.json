@@ -3,6 +3,7 @@
   "displayName": "mermaid-to-code",
   "description": "transform uml created with mermaid into a boilerplate ready code to be implemented\t",
   "version": "0.0.1",
+  "type": "module",
   "engines": {
     "vscode": "^1.110.0"
   },
@@ -10,12 +11,12 @@
     "Other"
   ],
   "activationEvents": [],
-  "main": "./dist/extension.js",
+  "main": "./dist/extension.cjs",
   "contributes": {
     "commands": [
       {
-        "command": "mermaid-to-code.helloWorld",
-        "title": "Hello World"
+        "command": "mermaid-to-code.generate",
+        "title": "Mermaid: Genera Classi dal Diagramma"
       }
     ]
   },
@@ -34,15 +35,21 @@
     "test": "vscode-test"
   },
   "devDependencies": {
-    "@types/vscode": "^1.110.0",
+    "@types/jsdom": "^28.0.0",
     "@types/mocha": "^10.0.10",
     "@types/node": "22.x",
-    "typescript-eslint": "^8.56.1",
-    "eslint": "^9.39.3",
-    "esbuild": "^0.27.3",
-    "npm-run-all": "^4.1.5",
-    "typescript": "^5.9.3",
+    "@types/vscode": "^1.110.0",
     "@vscode/test-cli": "^0.0.12",
-    "@vscode/test-electron": "^2.5.2"
+    "@vscode/test-electron": "^2.5.2",
+    "esbuild": "^0.27.3",
+    "eslint": "^9.39.3",
+    "npm-run-all": "^4.1.5",
+    "type-fest": "^5.4.4",
+    "typescript": "^5.9.3",
+    "typescript-eslint": "^8.56.1"
+  },
+  "dependencies": {
+    "jsdom": "^28.1.0",
+    "mermaid": "^11.13.0"
   }
 }
