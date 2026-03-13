@@ -312,14 +312,16 @@ function parseMember(memberStr: string, entity: Entity) {
         cleanStr = cleanStr.substring(0, cleanStr.length - 1).trim();
     }
 
-    // Visibilità (C# usa internal al posto di ~)
+    // Visibilità: rileva se è stata inserita esplicitamente
     let visibility = 'public';
-    if (cleanStr.startsWith('-')) visibility = 'private';
-    else if (cleanStr.startsWith('#')) visibility = 'protected';
-    else if (cleanStr.startsWith('~')) visibility = 'internal';
-    else if (cleanStr.startsWith('+')) visibility = 'public';
+    let hasExplicitVisibility = false;
+
+    if (cleanStr.startsWith('-')) { visibility = 'private'; hasExplicitVisibility = true; }
+    else if (cleanStr.startsWith('#')) { visibility = 'protected'; hasExplicitVisibility = true; }
+    else if (cleanStr.startsWith('~')) { visibility = 'internal'; hasExplicitVisibility = true; }
+    else if (cleanStr.startsWith('+')) { visibility = 'public'; hasExplicitVisibility = true; }
     
-    if ('-+#~'.includes(cleanStr.charAt(0))) {
+    if (hasExplicitVisibility) {
         cleanStr = cleanStr.substring(1).trim();
     }
 
@@ -334,20 +336,34 @@ function parseMember(memberStr: string, entity: Entity) {
 
         const beforeParts = beforeParen.split(' ').filter(p => p.length > 0);
         const name = beforeParts.pop() || 'Method';
-        const returnType = beforeParts.join(' ') || afterParen || 'void';
+        
+        // Estrazione sicura del tipo di ritorno: se assente o vuoto, forziamo "void"
+        const extractedType = beforeParts.join(' ').trim() || afterParen.trim();
+        const returnType = extractedType !== '' ? extractedType : 'void';
 
         entity.methods.push({ visibility, name, returnType, params, isAbstract, isStatic });
     } else {
-        // Proprietà
+        // Proprietà o Field
+        let name = 'Property';
+        let type = 'object';
+
         if (cleanStr.includes(':')) {
             const parts = cleanStr.split(':');
-            entity.properties.push({ visibility, name: parts[0].trim(), type: parts[1].trim(), isStatic });
+            name = parts[0].trim();
+            type = parts[1].trim();
         } else {
             const parts = cleanStr.split(' ').filter(p => p.length > 0);
-            const name = parts.pop() || 'Property';
-            const type = parts.join(' ') || 'object';
-            entity.properties.push({ visibility, name, type, isStatic });
+            name = parts.pop() || 'Property';
+            type = parts.join(' ') || 'object';
         }
+
+        // Regola C#: se la visibilità non è stata forzata e il nome è in camelCase,
+        // di default lo consideriamo un field "private". Altrimenti mantiene la logica di base (public).
+        if (!hasExplicitVisibility && /^[a-z_]/.test(name)) {
+            visibility = 'private';
+        }
+
+        entity.properties.push({ visibility, name, type, isStatic });
     }
 }
 
@@ -384,11 +400,21 @@ function generateCSharpCode(entity: Entity): string {
 
     code += `${declaration}\n${indent}{\n`;
 
-    // Generazione Proprietà
+    // Generazione Field e Proprietà
     entity.properties.forEach(prop => {
         const vis = entity.type === EntityType.Interface ? '' : `${prop.visibility} `;
         const stat = prop.isStatic ? 'static ' : '';
-        code += `${indent}    ${vis}${stat}${mapType(prop.type)} ${prop.name} { get; set; }\n`;
+        
+        // Verifica se il membro inizia con lettera minuscola o underscore (camelCase) -> Field
+        const isCamelCase = /^[a-z_]/.test(prop.name);
+
+        if (isCamelCase && entity.type !== EntityType.Interface) {
+            // Genera come Field: es. private int age;
+            code += `${indent}    ${vis}${stat}${mapType(prop.type)} ${prop.name};\n`;
+        } else {
+            // Genera come Auto-Property: es. public int Age { get; set; }
+            code += `${indent}    ${vis}${stat}${mapType(prop.type)} ${prop.name} { get; set; }\n`;
+        }
     });
 
     if (entity.properties.length > 0 && entity.methods.length > 0) code += '\n';
@@ -413,6 +439,9 @@ function generateCSharpCode(entity: Entity): string {
 }
 
 function mapType(type: string): string {
+    // Fallback di sicurezza se il tipo arriva vuoto
+    if (!type || type.trim() === '') return 'void';
+
     // Generici (List~int~ -> List<int>)
     let normalizedType = type.replace(/~([^~]+)~/g, '<$1>');
 
@@ -421,7 +450,7 @@ function mapType(type: string): string {
     if (t === 'string' || t === 'bool' || t === 'void' || t === 'int' || t === 'double' || t === 'float' || t === 'long' || t === 'decimal') return t;
     if (t === 'boolean') return 'bool';
     if (t === 'number') return 'double'; 
-    if (t === 'any') return 'object';
+    if (t === 'any' || t === 'object') return 'object';
     if (t === 'date' || t === 'datetime') return 'DateTime';
 
     return normalizedType; 

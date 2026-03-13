@@ -2,7 +2,7 @@
   "name": "mermaid-to-code",
   "displayName": "mermaid-to-code",
   "description": "transform uml created with mermaid into a boilerplate ready code to be implemented\t",
-  "version": "0.0.1",
+  "version": "1.0.0",
   "type": "module",
   "engines": {
     "vscode": "^1.110.0"
