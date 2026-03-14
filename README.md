@@ -36,7 +36,7 @@ classDiagram
 
 ```
 
-than hit `ctrl-shift-P` to generate the C# code on your home folder...
+than hit `ctrl-shift-P` to generate the C# code on your home folder select: `Mermaid-Code: Generate Classes from Mermaid Diagram`
 
 <!-- ## Requirements
 

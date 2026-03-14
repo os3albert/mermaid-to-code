@@ -1,7 +1,7 @@
 import * as vscode from 'vscode';
 import * as fs from 'fs';
 import * as path from 'path';
-import { JSDOM } from 'jsdom';
+import { Window } from 'happy-dom';
 
 /**
  * Estensione avanzata per generare codice C#
@@ -44,33 +44,37 @@ interface Entity {
 // Riferimento globale per l'istanza di Mermaid caricata dinamicamente
 let mermaidInstance: any = null;
 
-export async function activate(context: vscode.ExtensionContext) {
+export function activate(context: vscode.ExtensionContext) {
     
-    // 1. Configurazione JSDOM: Creiamo un finto browser PRIMA di caricare Mermaid
-    const dom = new JSDOM('<!DOCTYPE html><html><head></head><body></body></html>');
-    (global as any).window = dom.window;
-    (global as any).document = dom.window.document;
-    (global as any).DOMParser = dom.window.DOMParser;
-
-    // Fix per l'errore "Cannot set property navigator":
-    Object.defineProperty(global, 'navigator', {
-        value: dom.window.navigator,
-        configurable: true,
-        writable: true
-    });
-
-    // 2. Importiamo Mermaid in modo dinamico
-    try {
-        const mermaidModule = await import('mermaid');
-        mermaidInstance = mermaidModule.default || mermaidModule;
-        mermaidInstance.initialize({ startOnLoad: false });
-    } catch (err) {
-        console.error("Errore fatale durante il caricamento di Mermaid:", err);
-        vscode.window.showErrorMessage('Impossibile caricare il parser Mermaid. Assicurati che "mermaid" e "jsdom" siano installati.');
-        return;
-    }
-
+    // Registriamo il comando SUBITO in modo sincrono per evitare l'errore "command not found"
     let disposable = vscode.commands.registerCommand('mermaid-to-code.generate', async () => {
+        
+        // Inizializzazione "Lazy" (eseguita solo la prima volta che clicchi il comando)
+        if (!mermaidInstance) {
+            try {
+                // 1. Configurazione DOM con happy-dom (Risolve il bug di JSDOM "ENOENT")
+                const window = new Window();
+                (global as any).window = window;
+                (global as any).document = window.document;
+                (global as any).DOMParser = window.DOMParser;
+
+                Object.defineProperty(global, 'navigator', {
+                    value: window.navigator,
+                    configurable: true,
+                    writable: true
+                });
+
+                // 2. Importiamo Mermaid in modo dinamico
+                const mermaidModule = await import('mermaid');
+                mermaidInstance = mermaidModule.default || mermaidModule;
+                mermaidInstance.initialize({ startOnLoad: false });
+            } catch (err: any) {
+                console.error("Errore fatale durante il caricamento di Mermaid:", err);
+                vscode.window.showErrorMessage(`Errore di inizializzazione librerie: ${err.message || err}`);
+                return;
+            }
+        }
+
         const editor = vscode.window.activeTextEditor;
 
         if (!editor || editor.document.languageId !== 'markdown') {

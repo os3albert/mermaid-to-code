@@ -1,8 +1,9 @@
 {
   "name": "mermaid-to-code",
+  "publisher": "os3albert",
   "displayName": "mermaid-to-code",
   "description": "transform uml created with mermaid into a boilerplate ready code to be implemented\t",
-  "version": "1.0.0",
+  "version": "1.0.3",
   "type": "module",
   "engines": {
     "vscode": "^1.110.0"
@@ -10,13 +11,17 @@
   "categories": [
     "Other"
   ],
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/os3albert/mermaid-to-code.git"
+  },
   "activationEvents": [],
   "main": "./dist/extension.cjs",
   "contributes": {
     "commands": [
       {
         "command": "mermaid-to-code.generate",
-        "title": "Mermaid: Genera Classi dal Diagramma"
+        "title": "Mermaid-Code: Generate Classes from Mermaid Diagram"
       }
     ]
   },
@@ -35,7 +40,6 @@
     "test": "vscode-test"
   },
   "devDependencies": {
-    "@types/jsdom": "^28.0.0",
     "@types/mocha": "^10.0.10",
     "@types/node": "22.x",
     "@types/vscode": "^1.110.0",
@@ -49,7 +53,7 @@
     "typescript-eslint": "^8.56.1"
   },
   "dependencies": {
-    "jsdom": "^28.1.0",
+    "happy-dom": "^20.8.4",
     "mermaid": "^11.13.0"
   }
 }
