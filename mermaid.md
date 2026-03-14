@@ -11,7 +11,9 @@ classDiagram
     Animal: +mate()
     class Duck{
         +String beakColor
+        <!-- muove l'anatra di una certa posizione -->
         +swim()
+        <!-- il suono che deve emettere -->
         +quack()
     } 
     class Fish{

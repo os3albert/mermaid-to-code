@@ -20,6 +20,7 @@ interface Property {
     name: string;
     type: string;
     isStatic: boolean;
+    doc?: string;
 }
 
 interface Method {
@@ -29,6 +30,7 @@ interface Method {
     params: string;
     isAbstract: boolean;
     isStatic: boolean;
+    doc?: string;
 }
 
 interface Entity {
@@ -39,6 +41,7 @@ interface Entity {
     extends: string[];
     implements: string[];
     enumValues: string[];
+    doc?: string;
 }
 
 // Riferimento globale per l'istanza di Mermaid caricata dinamicamente
@@ -135,6 +138,144 @@ function extractMermaidDiagrams(text: string): string[] {
     return blocks;
 }
 
+/**
+ * Pre-processa il diagramma estraendo i commenti HTML <!-- ... -->
+ * e li associa alla classe o al membro (metodo/proprietà) immediatamente successivo.
+ */
+function preprocessMermaidAndExtractDocs(diagramContent: string) {
+    const classDocs = new Map<string, string>();
+    const memberDocs = new Map<string, Map<string, string>>();
+    const cleanLines: string[] = [];
+
+    let currentClass = "";
+    let pendingComment = "";
+    let inComment = false;
+    let commentBuffer: string[] = [];
+
+    const lines = diagramContent.split('\n');
+
+    function updateCurrentClass(line: string) {
+        let classMatch = line.match(/^class\s+([a-zA-Z0-9_]+)/);
+        if (classMatch) {
+            currentClass = classMatch[1];
+        } else if (line.includes('}')) {
+            currentClass = "";
+        }
+    }
+
+    function associateComment(line: string, comment: string) {
+        let targetClass = currentClass;
+        let isClassDef = false;
+        let classMatch = line.match(/^class\s+([a-zA-Z0-9_]+)/);
+
+        if (classMatch) {
+            targetClass = classMatch[1];
+            currentClass = targetClass;
+            isClassDef = true;
+        } else if (line.includes('}')) {
+            currentClass = "";
+            return;
+        }
+
+        if (isClassDef) {
+            classDocs.set(targetClass, comment);
+        } else {
+            let memberStr = line;
+            const standaloneMatch = line.match(/^([a-zA-Z0-9_]+)\s*:\s*(.+)$/);
+            if (standaloneMatch) {
+                targetClass = standaloneMatch[1];
+                memberStr = standaloneMatch[2].trim();
+            }
+
+            if (targetClass && memberStr.trim().length > 0) {
+                if (!memberDocs.has(targetClass)) {
+                    memberDocs.set(targetClass, new Map<string, string>());
+                }
+                const normalizedKey = memberStr.replace(/\s+/g, '');
+                memberDocs.get(targetClass)!.set(normalizedKey, comment);
+            }
+        }
+    }
+
+    for (let i = 0; i < lines.length; i++) {
+        let line = lines[i].trim();
+        const originalLine = lines[i];
+
+        if (inComment) {
+            const endIdx = line.indexOf('-->');
+            if (endIdx !== -1) {
+                commentBuffer.push(line.substring(0, endIdx).trim());
+                const newComment = commentBuffer.filter(c => c).join('\n').trim();
+                pendingComment = pendingComment ? pendingComment + '\n' + newComment : newComment;
+                inComment = false;
+                
+                let remaining = line.substring(endIdx + 3).trim();
+                if (remaining) {
+                    cleanLines.push(remaining);
+                    associateComment(remaining, pendingComment);
+                    pendingComment = "";
+                }
+            } else {
+                commentBuffer.push(line);
+            }
+            continue;
+        }
+
+        const startIdx = line.indexOf('<!--');
+        if (startIdx !== -1) {
+            const endIdx = line.indexOf('-->', startIdx + 4);
+            if (endIdx !== -1) {
+                const extractedComment = line.substring(startIdx + 4, endIdx).trim();
+                pendingComment = pendingComment ? pendingComment + '\n' + extractedComment : extractedComment;
+                
+                let before = line.substring(0, startIdx).trim();
+                let after = line.substring(endIdx + 3).trim();
+                
+                if (before) {
+                    cleanLines.push(before);
+                    associateComment(before, pendingComment);
+                    pendingComment = ""; 
+                } else if (after) {
+                    cleanLines.push(after);
+                    associateComment(after, pendingComment);
+                    pendingComment = "";
+                }
+                continue;
+            } else {
+                inComment = true;
+                commentBuffer = [line.substring(startIdx + 4).trim()];
+                let before = line.substring(0, startIdx).trim();
+                if (before) {
+                    cleanLines.push(before);
+                    associateComment(before, pendingComment);
+                    pendingComment = "";
+                }
+                continue;
+            }
+        }
+
+        if (!line) {
+            cleanLines.push(originalLine);
+            continue;
+        }
+
+        cleanLines.push(originalLine);
+
+        if (pendingComment) {
+            associateComment(line, pendingComment);
+            pendingComment = "";
+        } else {
+            updateCurrentClass(line);
+        }
+    }
+
+    return {
+        cleanDiagram: cleanLines.join('\n'),
+        classDocs,
+        memberDocs
+    };
+}
+
 async function parseMermaidClassDiagramOfficial(text: string, mermaidLib: any): Promise<Map<string, Entity>> {
     const entities = new Map<string, Entity>();
 
@@ -157,7 +298,26 @@ async function parseMermaidClassDiagramOfficial(text: string, mermaidLib: any): 
 
     for (const diagramContent of diagrams) {
         try {
-            const diagram = await mermaidLib.mermaidAPI.getDiagramFromText(diagramContent);
+            // Estrae prima i commenti docstring pulendo il codice per Mermaid
+            const { cleanDiagram, classDocs, memberDocs } = preprocessMermaidAndExtractDocs(diagramContent);
+            
+            // Estrae anche le note di classe di Mermaid (es. note for Duck "can fly<br>can swim")
+            const noteRegex = /note\s+for\s+([a-zA-Z0-9_]+)\s+"([^"]+)"/g;
+            let noteMatch;
+            while ((noteMatch = noteRegex.exec(cleanDiagram)) !== null) {
+                const className = noteMatch[1];
+                const rawNote = noteMatch[2];
+                // Sostituisce i <br>, <br/> o <br /> di Mermaid con andate a capo reali per la docstring
+                const cleanNote = rawNote.replace(/<br\s*\/?>/gi, '\n');
+
+                if (classDocs.has(className)) {
+                    classDocs.set(className, classDocs.get(className) + '\n' + cleanNote);
+                } else {
+                    classDocs.set(className, cleanNote);
+                }
+            }
+
+            const diagram = await mermaidLib.mermaidAPI.getDiagramFromText(cleanDiagram);
             const db = (diagram as any).db;
             
             if (!db || typeof db.getClasses !== 'function') continue;
@@ -175,6 +335,12 @@ async function parseMermaidClassDiagramOfficial(text: string, mermaidLib: any): 
             // 1. Elaborazione delle Classi e dei loro Membri (Proprietà, Metodi, Modificatori)
             for (const [className, classData] of classesArray) {
                 const entity = getEntity(className);
+
+                // Assegna il DocString di classe (se presente)
+                if (classDocs.has(className)) {
+                    entity.doc = classDocs.get(className);
+                }
+                const classMemberDocs = memberDocs.get(className);
 
                 if (classData.annotations && classData.annotations.length > 0) {
                     const ann = classData.annotations[0].toLowerCase();
@@ -195,7 +361,7 @@ async function parseMermaidClassDiagramOfficial(text: string, mermaidLib: any): 
                         let classifier = memberObj.classifier || '';
                         memberStr = `${vis}${type}${name}${classifier}`;
                     }
-                    if (memberStr) parseMember(memberStr, entity);
+                    if (memberStr) parseMember(memberStr, entity, classMemberDocs);
                 }
 
                 const methods = classData.methods || [];
@@ -218,7 +384,7 @@ async function parseMermaidClassDiagramOfficial(text: string, mermaidLib: any): 
                     } else if (methodStr && !methodStr.includes('(')) {
                         methodStr += '()'; // Se è una stringa grezza mancante, la forziamo a metodo
                     }
-                    if (methodStr) parseMember(methodStr, entity);
+                    if (methodStr) parseMember(methodStr, entity, classMemberDocs);
                 }
             }
 
@@ -286,8 +452,28 @@ async function parseMermaidClassDiagramOfficial(text: string, mermaidLib: any): 
     return entities;
 }
 
-function parseMember(memberStr: string, entity: Entity) {
+function parseMember(memberStr: string, entity: Entity, rawMemberDocs?: Map<string, string>) {
     let cleanStr = memberStr.trim();
+    let docStr: string | undefined = undefined;
+
+    // Associa il DocString corretto in base al testo normalizzato
+    if (rawMemberDocs) {
+        const normalizedQuery = cleanStr.replace(/\s+/g, '');
+        // Priorità al matching esatto
+        if (rawMemberDocs.has(normalizedQuery)) {
+            docStr = rawMemberDocs.get(normalizedQuery);
+        } else {
+            // Fallback: match permissivo ignorando eventuali visibilità aggiunte o rimosse da Mermaid
+            const queryNoVis = normalizedQuery.replace(/^[+#-~]/, '');
+            for (const [key, val] of rawMemberDocs.entries()) {
+                const keyNoVis = key.replace(/^[+#-~]/, '');
+                if (keyNoVis === queryNoVis) {
+                    docStr = val;
+                    break;
+                }
+            }
+        }
+    }
 
     if (cleanStr.startsWith('<<') && cleanStr.endsWith('>>')) {
         const annotation = cleanStr.substring(2, cleanStr.length - 2).toLowerCase();
@@ -345,7 +531,7 @@ function parseMember(memberStr: string, entity: Entity) {
         const extractedType = beforeParts.join(' ').trim() || afterParen.trim();
         const returnType = extractedType !== '' ? extractedType : 'void';
 
-        entity.methods.push({ visibility, name, returnType, params, isAbstract, isStatic });
+        entity.methods.push({ visibility, name, returnType, params, isAbstract, isStatic, doc: docStr });
     } else {
         // Proprietà o Field
         let name = 'Property';
@@ -367,7 +553,7 @@ function parseMember(memberStr: string, entity: Entity) {
             visibility = 'private';
         }
 
-        entity.properties.push({ visibility, name, type, isStatic });
+        entity.properties.push({ visibility, name, type, isStatic, doc: docStr });
     }
 }
 
@@ -379,6 +565,11 @@ function generateCSharpCode(entity: Entity): string {
     const indent = '    '; 
 
     if (entity.type === EntityType.Enum) {
+        if (entity.doc) {
+            code += `${indent}/// <summary>\n`;
+            entity.doc.split('\n').forEach(line => code += `${indent}/// ${line}\n`);
+            code += `${indent}/// </summary>\n`;
+        }
         code += `${indent}public enum ${entity.name}\n${indent}{\n`;
         entity.enumValues.forEach(v => code += `${indent}    ${v},\n`);
         code += `${indent}}\n}\n`;
@@ -402,6 +593,12 @@ function generateCSharpCode(entity: Entity): string {
         declaration += ` : ${uniqueParents.join(', ')}`;
     }
 
+    // Inserisce il docstring di Classe
+    if (entity.doc) {
+        code += `${indent}/// <summary>\n`;
+        entity.doc.split('\n').forEach(line => code += `${indent}/// ${line}\n`);
+        code += `${indent}/// </summary>\n`;
+    }
     code += `${declaration}\n${indent}{\n`;
 
     // Generazione Field e Proprietà
@@ -411,6 +608,13 @@ function generateCSharpCode(entity: Entity): string {
         
         // Verifica se il membro inizia con lettera minuscola o underscore (camelCase) -> Field
         const isCamelCase = /^[a-z_]/.test(prop.name);
+
+        // Inserisce il docstring di Proprietà
+        if (prop.doc) {
+            code += `${indent}    /// <summary>\n`;
+            prop.doc.split('\n').forEach(line => code += `${indent}    /// ${line}\n`);
+            code += `${indent}    /// </summary>\n`;
+        }
 
         if (isCamelCase && entity.type !== EntityType.Interface) {
             // Genera come Field: es. private int age;
@@ -431,6 +635,13 @@ function generateCSharpCode(entity: Entity): string {
         
         const signature = `${vis}${stat}${abs}${mapType(method.returnType)} ${method.name}(${method.params})`;
         
+        // Inserisce il docstring di Metodo
+        if (method.doc) {
+            code += `${indent}    /// <summary>\n`;
+            method.doc.split('\n').forEach(line => code += `${indent}    /// ${line}\n`);
+            code += `${indent}    /// </summary>\n`;
+        }
+
         if (entity.type === EntityType.Interface || (entity.type === EntityType.AbstractClass && method.isAbstract)) {
             code += `${indent}    ${signature};\n`; 
         } else {

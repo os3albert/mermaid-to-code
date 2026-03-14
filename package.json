@@ -3,7 +3,7 @@
   "publisher": "os3albert",
   "displayName": "mermaid-to-code",
   "description": "transform uml created with mermaid into a boilerplate ready code to be implemented\t",
-  "version": "1.0.3",
+  "version": "1.0.4",
   "type": "module",
   "engines": {
     "vscode": "^1.110.0"
@@ -24,6 +24,11 @@
         "title": "Mermaid-Code: Generate Classes from Mermaid Diagram"
       }
     ]
+  },
+  "icon": "images/icon.png",
+  "galleryBanner": {
+    "color": "#C80000",
+    "theme": "dark"
   },
   "scripts": {
     "vscode:prepublish": "npm run package",

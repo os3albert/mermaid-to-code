@@ -56,7 +56,6 @@ This extension contributes the following settings:
 ## Known Issues
 
 > note that those issues we are going to solve to make this extensions more practicle
-- all generated files stay on home folder at the moment
 - package default name should be the folder project name as usual
 
 ## Release Notes
