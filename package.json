@@ -3,7 +3,7 @@
   "publisher": "os3albert",
   "displayName": "mermaid-to-code",
   "description": "transform uml created with mermaid into a boilerplate ready code to be implemented\t",
-  "version": "1.0.4",
+  "version": "1.0.5",
   "type": "module",
   "engines": {
     "vscode": "^1.110.0"

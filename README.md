@@ -1,98 +1,176 @@
-# mermaid-to-code README
+# Mermaid to C# Code Generator 🧜‍♂️💻
 
-This extension "mermaid-to-code" is used to create code through the use of UML notation using mermaid.js
+Transform your UML class diagrams drawn with **Mermaid.js** (inside Markdown files) into ready-to-use **C# source code** with a single click!
 
-<!-- After writing up a brief description, we recommend including the following sections. -->
+This extension is the ideal companion for software architecture (Class Design), allowing you to quickly move from visual design to code implementation while maintaining C# language conventions and standards.
 
-## Features
+## ✨ Main Features
 
-write a markdown file with this the marmaid structure like this for example:
-```
+* 🏗️ **Full OOP Support**: Generates Classes, Interfaces (`<<interface>>`), Abstract Classes (`<<abstract>>`), and Enumerations (`<<enumeration>>`).
+
+* 🧬 **Inheritance and Implementation**: Recognizes UML arrows (`<|--` and `<|..`) and maps them correctly in C#.
+
+* 🔗 **Smart Relationships**: Associations, aggregations (`o--`), and compositions (`*--`) automatically generate navigation properties in the code.
+
+* 📝 **XML Docstrings (///)**: Generates `<summary>` comments extracting them from HTML comments (`<!-- ... -->`) or Mermaid's `note for` directives.
+
+* ⚙️ **Fields vs Properties**: Automatically applies C# conventions. Names in `camelCase` become `private` Fields, names in `PascalCase` become `public` Auto-Properties.
+
+* 📦 **Generics Support**: Natively translates Mermaid generics syntax (e.g., `List~string~`) into C# (`List<string>`).
+
+* 🔐 **Access Modifiers and Special Members**: Supports `public` (+), `private` (-), `protected` (#), `internal` (~), as well as `static` ($) and `abstract` (*) members.
+
+## 🚀 How to Use
+
+1. Open any **Markdown (`.md`)** file in VS Code containing a ````mermaid```` block with a `classDiagram`.
+
+2. Open the VS Code Command Palette (`Ctrl+Shift+P` on Windows/Linux, `Cmd+Shift+P` on Mac).
+
+3. Search for and execute the command: **`Mermaid-Code: Generate Classes from Mermaid Diagram`**.
+
+4. The `.cs` files will be generated instantly in the same folder as your Markdown file!
+
+## 📖 Usage Examples
+
+### 1. Base Class with Properties, Fields, and Methods
+
+The extension automatically distinguishes between *Fields* (camelCase) and *Auto-Properties* (PascalCase), applying the correct C# types.
+
+**Mermaid (Markdown):**
+
+````markdown
 ```mermaid
 classDiagram
-    note "From Duck till Zebra"
-    Animal <|-- Duck
-    note for Duck "can fly<br>can swim<br>can dive<br>can help in debugging"
-    Animal <|-- Fish
-    Animal <|-- Zebra
-    Animal : +int Age
-    Animal : +String Gender
-    Animal: +isMammal()
-    Animal: +mate()
-    class Duck{
-        +String beakColor
-        +swim()
-        +quack()
-    } 
-    class Fish{
-        -int sizeInFeet
-        -canEat()
+    class User {
+        -string _password
+        +String Username
+        +List~Role~ Roles
+        +Login(string username, string password) bool
     }
-    class Zebra{
-        +bool is_wild
-        +run()
-    }
-''' <--- those should be backtick
+    **Generated C# Code (`User.cs`):**
 
 ```
+````
 
-than hit `ctrl-shift-P` to generate the C# code on your home folder select: `Mermaid-Code: Generate Classes from Mermaid Diagram`
+```cs
+/**
+ * Auto-generated from Mermaid UML diagram
+ */
+using System;
+using System.Collections.Generic;
 
-<!-- ## Requirements
+namespace MermaidGenerated
+{
+    public class User
+    {
+        private string _password;
+        public string Username { get; set; }
+        public List<Role> Roles { get; set; }
 
-If you have any requirements or dependencies, add a section describing those and how to install and configure them. -->
+        public bool Login(string username, string password)
+        {
+            // TODO: Implementation
+            throw new NotImplementedException();
+        }
+    }
+}
+```
 
-<!-- ## Extension Settings
+### 2. Inheritance, Interfaces, and Abstract Classes
 
-Include if your extension adds any VS Code settings through the `contributes.configuration` extension point.
+Advanced management of hierarchies and enforcement of abstract methods.
 
-For example:
+**Mermaid (Markdown):**
 
-This extension contributes the following settings:
+````markdown
+```mermaid
+classDiagram
+    <<interface>> IAnimal
+    <<abstract>> Mammal
+    
+    IAnimal <|.. Mammal
+    Mammal <|-- Dog
+    
+    class IAnimal {
+        +Eat() void
+    }
+    
+    class Mammal {
+        +int Age
+        +Walk()*
+    }
+    
+    class Dog {
+        +Bark()
+    }
+```
+````
 
-* `myExtension.enable`: Enable/disable this extension.
-* `myExtension.thing`: Set to `blah` to do something. -->
+## Generated C# Code (Mammal.cs and others):
+```cs
+public abstract class Mammal : IAnimal
+    {
+        public int Age { get; set; }
 
-## Known Issues
+        public abstract void Walk();
+    }
+```
 
-> note that those issues we are going to solve to make this extensions more practicle
-- package default name should be the folder project name as usual
+### 3. Docstring Generation from Notes and Comments
 
-## Release Notes
+You can document your code directly from the diagram!
 
-<!-- Users appreciate release notes as you update your extension. -->
+**Mermaid (Markdown):**
+```mermaid
+classDiagram
+    note for Configuration "Manages global settings."
+    
+    class Configuration {
+        <!-- The main database URL -->
+        +String DatabaseUrl
+    }
+```
+## Generated C# Code (Configuration.cs):
+```cs
+    /// <summary>
+    /// Manages global settings.
+    /// </summary>
+    public class Configuration
+    {
+        /// <summary>
+        /// The main database URL
+        /// </summary>
+        public string DatabaseUrl { get; set; }
+    }
+```
 
-### 1.0.0
+### 4. Composition and Aggregation (Navigation Properties)
 
-Initial release of mermaid-to-code
+If you define a visual relationship between two classes (e.g., a Room contains Windows), the extension will create the property automatically!
 
-<!-- ### 1.0.1
+**Mermaid (Markdown):**
+```mermaid
+classDiagram
+    Room *-- Window : contains
+    class Room {
+        +String Name
+    }
+```
 
-Fixed issue #.
+## Generated C# Code (Room.cs):
 
-### 1.1.0
+```cs
+    public class Room
+    {
+        public string Name { get; set; }
+        public Window Window { get; set; } // <-- Automatically generated from the *-- relationship
+    }
+```
 
-Added features X, Y, and Z. -->
+## ⚠️ Requirements and Limitations
+The file where the command is executed must be saved on disk and have a .md extension.
 
----
+Ensure that the code blocks correctly start with mermaid and contain the keyword classDiagram.
 
-<!-- ## Following extension guidelines
-
-Ensure that you've read through the extensions guidelines and follow the best practices for creating your extension.
-
-* [Extension Guidelines](https://code.visualstudio.com/api/references/extension-guidelines) -->
-
-<!-- ## Working with Markdown
-
-You can author your README using Visual Studio Code. Here are some useful editor keyboard shortcuts:
-
-* Split the editor (`Cmd+\` on macOS or `Ctrl+\` on Windows and Linux).
-* Toggle preview (`Shift+Cmd+V` on macOS or `Shift+Ctrl+V` on Windows and Linux).
-* Press `Ctrl+Space` (Windows, Linux, macOS) to see a list of Markdown snippets.
-
-## For more information
-
-* [Visual Studio Code's Markdown Support](http://code.visualstudio.com/docs/languages/markdown)
-* [Markdown Syntax Reference](https://help.github.com/articles/markdown-basics/)
-
-**Enjoy!** -->
+## 🤝 Contributing
+Bug reports and pull requests are welcome! If your UML diagram is not generated as expected, open an Issue attaching the problematic Mermaid block.
