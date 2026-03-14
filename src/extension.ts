@@ -653,7 +653,16 @@ function generateCSharpCode(entity: Entity): string {
         const stat = method.isStatic ? 'static ' : '';
         const abs = (entity.type === EntityType.AbstractClass && method.isAbstract) ? 'abstract ' : '';
         
-        const signature = `${vis}${stat}${abs}${mapType(method.returnType)} ${method.name}(${method.params})`;
+        // Check if the method is a Constructor
+        const isConstructor = method.name === entity.name;
+        
+        let signature = '';
+        if (isConstructor) {
+            // Constructors do not have a return type and cannot be abstract
+            signature = `${vis}${stat}${method.name}(${method.params})`;
+        } else {
+            signature = `${vis}${stat}${abs}${mapType(method.returnType)} ${method.name}(${method.params})`;
+        }
         
         // Inserts Method docstring
         if (method.doc) {
@@ -662,10 +671,14 @@ function generateCSharpCode(entity: Entity): string {
             code += `${indent}    /// </summary>\n`;
         }
 
-        if (entity.type === EntityType.Interface || (entity.type === EntityType.AbstractClass && method.isAbstract)) {
+        if (entity.type === EntityType.Interface || (entity.type === EntityType.AbstractClass && method.isAbstract && !isConstructor)) {
             code += `${indent}    ${signature};\n`; 
         } else {
-            code += `${indent}    ${signature}\n${indent}    {\n${indent}        // TODO: Implementation\n${indent}        throw new NotImplementedException();\n${indent}    }\n\n`; 
+            if (isConstructor) {
+                code += `${indent}    ${signature}\n${indent}    {\n${indent}        // TODO: Initialize constructor\n${indent}    }\n\n`; 
+            } else {
+                code += `${indent}    ${signature}\n${indent}    {\n${indent}        // TODO: Implementation\n${indent}        throw new NotImplementedException();\n${indent}    }\n\n`; 
+            }
         }
     });
 
